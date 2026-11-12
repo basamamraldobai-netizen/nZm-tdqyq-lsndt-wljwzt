@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "مدقق السندات والجوازات"
+description = "أداة عربية خاصة لاستيراد ملفات Excel ومراجعة بيانات الجوازات والسندات. تعالج الملفات محليًا داخل المتصفح، تحفظ الحركات الأصلية، تقترح تصحيحات الوكلاء والأسماء المركبة للموافقة، وتدعم توزيع مبالغ السندات المشتركة يدويًا وتصدير ملفات مقسمة."
+version = "1.0.0"
+id = "artifacts/passport-ledger"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 20994
+
+[services.development]
+run = "pnpm --filter @workspace/passport-ledger run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/passport-ledger", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/passport-ledger/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20994"
+BASE_PATH = "/"
