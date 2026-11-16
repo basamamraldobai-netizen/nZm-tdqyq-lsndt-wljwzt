@@ -14,11 +14,23 @@ export interface LocalWorkspace {
   updatedAt: string;
   fileName: string;
   sheetName: string;
+  firstRowIsHeader: boolean;
   rows: SourceRow[];
   agentAliases: AgentAlias[];
   allocations: Record<string, PassportAllocation[]>;
   approvedSplits: Record<string, string[]>;
   resolvedIssueIds: string[];
+  auditEvents: AuditEvent[];
+  skippedBlankRows: number;
+  rowsWithExtraColumns: number;
+}
+
+export interface AuditEvent {
+  id: string;
+  at: string;
+  action: string;
+  sourceRowNumber?: number;
+  summary: string;
 }
 
 function openDatabase(): Promise<IDBDatabase> {

@@ -20,6 +20,7 @@ export interface AgentAlias {
   canonicalName: string;
   aliases: string[];
   approved: boolean;
+  normalizedName?: string;
 }
 
 export interface PassportAllocation {
@@ -43,6 +44,9 @@ export type ReviewIssueKind =
   | "invalid-paid"
   | "missing-remaining"
   | "invalid-remaining"
+  | "missing-date"
+  | "invalid-date"
+  | "ambiguous-date"
   | "composite-passport"
   | "repeated-passport"
   | "reused-receipt"
@@ -63,6 +67,7 @@ export interface ImportResult {
   rows: SourceRow[];
   skippedBlankRows: number;
   rowsWithExtraColumns: number;
+  headerRowSkipped: boolean;
 }
 
 export interface AgentAliasCandidate {
@@ -136,15 +141,11 @@ export function normalizeArabicText(value: string): string {
 }
 
 export function normalizeAgentForSuggestion(value: string): string {
-  let normalized = normalizeArabicText(value).replace(/[\s.,،؛:_-]/g, "");
-  const titles = ["الدكتور", "دكتور", "الدكتورة", "دكتورة", "د."];
-  for (const title of titles) {
-    if (normalized.startsWith(title)) {
-      normalized = normalized.slice(title.length);
-      break;
-    }
-  }
-  return normalized;
+  const prepared = normalizeArabicText(value).replace(
+    /^(?:الدكتور|دكتور|الدكتورة|دكتورة|د\.)\s*/u,
+    "",
+  );
+  return prepared.replace(/[\s.,،؛:_-]/g, "");
 }
 
 export function parseAmount(value: RawCell): number | null {
@@ -169,6 +170,64 @@ export function parseAmount(value: RawCell): number | null {
 
   const parsed = Number(text);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toWesternDigits(value: string): string {
+  return value.replace(/[٠-٩۰-۹]/g, (digit) => ARABIC_DIGITS[digit] ?? digit);
+}
+
+function isCalendarDate(year: number, month: number, day: number): boolean {
+  if (year < 1900 || year > 2200 || month < 1 || month > 12 || day < 1 || day > 31) {
+    return false;
+  }
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+export function inspectDate(value: RawCell): "missing" | "valid" | "invalid" | "ambiguous" {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return "missing";
+  }
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? "invalid" : "valid";
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value > 0 && value < 150000 ? "valid" : "invalid";
+  }
+
+  const text = toWesternDigits(String(value).trim());
+  const ymd = text.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+  if (ymd) {
+    return isCalendarDate(Number(ymd[1]), Number(ymd[2]), Number(ymd[3]))
+      ? "valid"
+      : "invalid";
+  }
+
+  const parts = text.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/);
+  if (!parts) return "invalid";
+  const first = Number(parts[1]);
+  const second = Number(parts[2]);
+  let year = Number(parts[3]);
+  if (year < 100) year += year < 50 ? 2000 : 1900;
+
+  if (first <= 12 && second <= 12) return "ambiguous";
+  if (second > 12 && first <= 12) return "ambiguous";
+  return isCalendarDate(year, second, first) ? "valid" : "invalid";
+}
+
+export function formatDateCell(value: RawCell): string {
+  if (value instanceof Date) return value.toLocaleDateString("ar");
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    const date = new Date(Date.UTC(1899, 11, 30) + Math.floor(value) * 86400000);
+    if (!Number.isNaN(date.getTime())) {
+      const day = String(date.getUTCDate()).padStart(2, "0");
+      const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+      return `${day}/${month}/${date.getUTCFullYear()}`;
+    }
+  }
+  return rawToText(value);
 }
 
 export function splitPassportCandidates(value: string): string[] {
@@ -282,6 +341,20 @@ export function buildReviewIssues(rows: SourceRow[]): ReviewIssue[] {
       );
     }
 
+    const dateState = inspectDate(row.dateRaw);
+    if (dateState === "missing") {
+      add(row, "missing-date", "info", "التاريخ غير مسجل");
+    } else if (dateState === "invalid") {
+      add(row, "invalid-date", "review", "صيغة التاريخ غير واضحة؛ احتُفظت بالقيمة الأصلية");
+    } else if (dateState === "ambiguous") {
+      add(
+        row,
+        "ambiguous-date",
+        "review",
+        "ترتيب اليوم والشهر غير محسوم؛ احتُفظ بالتاريخ كما ورد",
+      );
+    }
+
     if (splitPassportCandidates(row.passportName).length) {
       add(
         row,
@@ -347,7 +420,10 @@ export function summarizeAllocation(
       (item) =>
         !Number.isFinite(Number(item.amount)) ||
         Number(item.amount) < 0 ||
-        !Number.isInteger(toMinorUnits(Number(item.amount))),
+        Math.abs(
+          Number(item.amount) * 100 -
+            Math.round(Number(item.amount) * 100),
+        ) > 1e-8,
     )
   ) {
     return {

@@ -33,7 +33,10 @@ function cellValue(sheet: XLSX.WorkSheet, row: number, column: number): RawCell 
   return String(cell.v);
 }
 
-export async function parseWorkbookFile(file: File): Promise<ImportResult> {
+export async function parseWorkbookFile(
+  file: File,
+  firstRowIsHeader = false,
+): Promise<ImportResult> {
   if (!/\.(xlsx|xls|xlsm)$/i.test(file.name)) {
     throw new Error("اختر ملف Excel بصيغة XLSX أو XLS أو XLSM.");
   }
@@ -57,7 +60,8 @@ export async function parseWorkbookFile(file: File): Promise<ImportResult> {
   let rowsWithExtraColumns = 0;
   const fileToken = makeFileToken();
 
-  for (let rowIndex = range.s.r; rowIndex <= range.e.r; rowIndex += 1) {
+  const firstDataRow = range.s.r + (firstRowIsHeader ? 1 : 0);
+  for (let rowIndex = firstDataRow; rowIndex <= range.e.r; rowIndex += 1) {
     const rawCells: RawCell[] = Array.from(
       { length: range.e.c + 1 },
       () => null,
@@ -93,6 +97,7 @@ export async function parseWorkbookFile(file: File): Promise<ImportResult> {
     rows,
     skippedBlankRows,
     rowsWithExtraColumns,
+    headerRowSkipped: firstRowIsHeader,
   };
 }
 
@@ -120,14 +125,14 @@ function makeTransactionSheet(rows: SourceRow[], aliases: AgentAlias[]) {
 
   for (const row of rows) {
     data.push([
-      row.rawCells[0] ?? "",
-      row.rawCells[1] ?? "",
-      row.rawCells[2] ?? "",
-      row.rawCells[3] ?? "",
+      row.passportName,
+      row.receiptNumber,
+      row.paidRaw ?? "",
+      row.remainingRaw ?? "",
       approvedAgentName(row.agentRaw, aliases),
-      row.rawCells[5] ?? "",
-      row.rawCells[7] ?? "",
-      row.rawCells[8] ?? "",
+      row.statusRaw,
+      row.dateRaw ?? "",
+      row.noteRaw,
     ]);
   }
 
